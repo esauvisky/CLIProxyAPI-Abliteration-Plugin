@@ -9,6 +9,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
+const mgmtLoginRoutePath = "/plugins/abliteration/login"
+
 type loginSubmission struct {
 	State  string `json:"state"`
 	APIKey string `json:"api_key"`
@@ -19,7 +21,7 @@ func handleManagementRegister() ([]byte, error) {
 		Routes: []pluginapi.ManagementRoute{
 			{
 				Method:      http.MethodPost,
-				Path:        "/plugins/abliteration/login",
+				Path:        mgmtLoginRoutePath,
 				Description: "Stores the Abliteration.ai API key for a pending login started by auth.login.start.",
 			},
 		},
@@ -49,21 +51,23 @@ func handleManagementHandle(raw []byte) ([]byte, error) {
 		return nil, errUnmarshal
 	}
 	observeOriginFromHeaders(req.Headers)
-	switch req.Method {
-	case http.MethodGet:
-		return okEnvelope(pluginapi.ManagementResponse{
-			StatusCode: http.StatusOK,
-			Headers: http.Header{
-				"Content-Type":  []string{"text/html; charset=utf-8"},
-				"Cache-Control": []string{"no-store"},
-			},
-			Body: []byte(loginPageHTML),
-		})
-	case http.MethodPost:
-		return handleLoginSubmit(req.Body)
-	default:
+	cleanedPath := strings.TrimRight(strings.TrimSpace(req.Path), "/")
+	if strings.HasSuffix(cleanedPath, mgmtLoginRoutePath) {
+		if strings.EqualFold(req.Method, http.MethodPost) {
+			return handleLoginSubmit(req.Body)
+		}
 		return nil, fmt.Errorf("abliteration management %s %s: unsupported method", req.Method, req.Path)
 	}
+
+	// /v0/resource/plugins/abliteration/login serves only the static UI asset.
+	return okEnvelope(pluginapi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: http.Header{
+			"Content-Type":  []string{"text/html; charset=utf-8"},
+			"Cache-Control": []string{"no-store"},
+		},
+		Body: []byte(loginPageHTML),
+	})
 }
 
 func handleLoginSubmit(body []byte) ([]byte, error) {
