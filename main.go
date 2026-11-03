@@ -73,7 +73,7 @@ const (
 	pluginID      = "abliteration"
 	providerID    = "abliteration"
 	pluginName    = "Abliteration.ai"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.1.1"
 	pluginAuthor  = "esauvisky"
 	pluginRepo    = "https://github.com/esauvisky/CLIProxyAPI-Abliteration-Plugin"
 	pluginLogo    = "https://raw.githubusercontent.com/esauvisky/CLIProxyAPI-Abliteration-Plugin/main/assets/logo.png"
@@ -193,7 +193,7 @@ func pluginRegistration() registration {
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
 			ExecutorInputFormats:  []string{"openai"},
 			ExecutorOutputFormats: []string{"openai"},
-			ManagementAPI:         false,
+			ManagementAPI:         true,
 		},
 	}
 }
@@ -266,6 +266,14 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]string{"identifier": providerID})
 	case pluginabi.MethodAuthParse:
 		return handleAuthParse(request)
+	case pluginabi.MethodAuthLoginStart:
+		return handleAuthLoginStart(request)
+	case pluginabi.MethodAuthLoginPoll:
+		return handleAuthLoginPoll(request)
+	case pluginabi.MethodManagementRegister:
+		return handleManagementRegister()
+	case pluginabi.MethodManagementHandle:
+		return handleManagementHandle(request)
 
 	case pluginabi.MethodModelForAuth:
 		return handleModelForAuth(request)

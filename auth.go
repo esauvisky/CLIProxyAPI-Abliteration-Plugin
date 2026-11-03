@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -113,6 +117,103 @@ func buildAuthDataFromCredential(cred storedCredential, fileName string) (plugin
 			"base_url": currentConfig().BaseURL,
 		},
 	}, nil
+}
+
+const (
+	loginStateTTL     = 15 * time.Minute
+	loginResourcePath = "/v0/resource/plugins/abliteration/login"
+)
+
+var pendingLogins sync.Map
+
+type pendingLogin struct {
+	expiresAt time.Time
+	apiKey    string
+}
+
+type rpcAuthLoginStartRequest struct {
+	pluginapi.AuthLoginStartRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+type rpcAuthLoginPollRequest struct {
+	pluginapi.AuthLoginPollRequest
+	HostCallbackID string `json:"host_callback_id,omitempty"`
+}
+
+func handleAuthLoginStart(raw []byte) ([]byte, error) {
+	var req rpcAuthLoginStartRequest
+	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
+		return nil, errUnmarshal
+	}
+	base, errBase := url.Parse(strings.TrimSpace(req.BaseURL))
+	if errBase != nil {
+		return nil, fmt.Errorf("parse auth.login.start base URL %q: %w", req.BaseURL, errBase)
+	}
+	if base.Scheme == "" || base.Host == "" {
+		return nil, fmt.Errorf("auth.login.start requires an absolute base URL from the host, got %q", req.BaseURL)
+	}
+	stateBytes := make([]byte, 32)
+	if _, errRand := rand.Read(stateBytes); errRand != nil {
+		return nil, fmt.Errorf("generate login state: %w", errRand)
+	}
+	state := hex.EncodeToString(stateBytes)
+	expiresAt := time.Now().UTC().Add(loginStateTTL)
+	pendingLogins.Store(state, pendingLogin{expiresAt: expiresAt})
+
+	loginURL := url.URL{
+		Scheme:   base.Scheme,
+		Host:     base.Host,
+		Path:     loginResourcePath,
+		RawQuery: url.Values{"state": {state}}.Encode(),
+	}
+	return okEnvelope(pluginapi.AuthLoginStartResponse{
+		Provider:  providerID,
+		URL:       loginURL.String(),
+		State:     state,
+		ExpiresAt: expiresAt,
+	})
+}
+
+func loadPendingLogin(state string) (pendingLogin, error) {
+	loaded, ok := pendingLogins.Load(state)
+	if !ok {
+		return pendingLogin{}, fmt.Errorf("unknown Abliteration.ai login state")
+	}
+	login := loaded.(pendingLogin)
+	if time.Now().UTC().After(login.expiresAt) {
+		pendingLogins.Delete(state)
+		return pendingLogin{}, fmt.Errorf("Abliteration.ai login state expired")
+	}
+	return login, nil
+}
+
+func handleAuthLoginPoll(raw []byte) ([]byte, error) {
+	var req rpcAuthLoginPollRequest
+	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
+		return nil, errUnmarshal
+	}
+	state := strings.TrimSpace(req.State)
+	login, errLogin := loadPendingLogin(state)
+	if errLogin != nil {
+		return nil, errLogin
+	}
+	if login.apiKey == "" {
+		return okEnvelope(pluginapi.AuthLoginPollResponse{
+			Status:  pluginapi.AuthLoginStatusPending,
+			Message: "Waiting for the API key to be entered on the login page",
+		})
+	}
+	authData, errBuild := buildAuthDataFromCredential(storedCredential{APIKey: login.apiKey}, "")
+	if errBuild != nil {
+		return nil, errBuild
+	}
+	pendingLogins.Delete(state)
+	return okEnvelope(pluginapi.AuthLoginPollResponse{
+		Status:  pluginapi.AuthLoginStatusSuccess,
+		Message: "Abliteration.ai login complete",
+		Auth:    authData,
+	})
 }
 
 func doHostHTTP(hostCallbackID, method, targetURL string, headers http.Header, body []byte) (pluginapi.HTTPResponse, error) {
