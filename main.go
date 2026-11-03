@@ -73,7 +73,7 @@ const (
 	pluginID      = "abliteration"
 	providerID    = "abliteration"
 	pluginName    = "Abliteration.ai"
-	pluginVersion = "0.1.3"
+	pluginVersion = "0.1.4"
 	pluginAuthor  = "esauvisky"
 	pluginRepo    = "https://github.com/esauvisky/CLIProxyAPI-Abliteration-Plugin"
 	pluginLogo    = "https://raw.githubusercontent.com/esauvisky/CLIProxyAPI-Abliteration-Plugin/main/assets/logo.png"

@@ -6,7 +6,7 @@
       "name": "Abliteration.ai",
       "description": "Adds the Abliteration.ai gateway (api.abliteration.ai) as an API-key provider. Lists the models your key can call from GET /v1/models and sends every request to OpenAI Chat Completions.",
       "author": "esauvisky",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "repository": "https://github.com/esauvisky/CLIProxyAPI-Abliteration-Plugin",
       "homepage": "https://github.com/esauvisky/CLIProxyAPI-Abliteration-Plugin",
       "logo": "https://raw.githubusercontent.com/esauvisky/CLIProxyAPI-Abliteration-Plugin/main/assets/logo.png",
