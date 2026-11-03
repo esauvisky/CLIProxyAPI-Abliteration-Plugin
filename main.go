@@ -73,7 +73,7 @@ const (
 	pluginID      = "abliteration"
 	providerID    = "abliteration"
 	pluginName    = "Abliteration.ai"
-	pluginVersion = "0.1.1"
+	pluginVersion = "0.1.2"
 	pluginAuthor  = "esauvisky"
 	pluginRepo    = "https://github.com/esauvisky/CLIProxyAPI-Abliteration-Plugin"
 	pluginLogo    = "https://raw.githubusercontent.com/esauvisky/CLIProxyAPI-Abliteration-Plugin/main/assets/logo.png"
@@ -103,9 +103,10 @@ func (e statusError) Error() string   { return e.message }
 func (e statusError) StatusCode() int { return e.httpStatus }
 
 type pluginConfig struct {
-	Enabled  bool   `yaml:"enabled" json:"enabled"`
-	Priority int    `yaml:"priority" json:"priority"`
-	BaseURL  string `yaml:"base_url" json:"base_url"`
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Priority  int    `yaml:"priority" json:"priority"`
+	BaseURL   string `yaml:"base_url" json:"base_url"`
+	PublicURL string `yaml:"public_url" json:"public_url"`
 }
 
 type lifecycleRequest struct {
@@ -126,6 +127,7 @@ type registrationCapability struct {
 	ExecutorModelScope    pluginapi.ExecutorModelScope `json:"executor_model_scope"`
 	ExecutorInputFormats  []string                     `json:"executor_input_formats"`
 	ExecutorOutputFormats []string                     `json:"executor_output_formats"`
+	ResponseInterceptor   bool                         `json:"response_interceptor"`
 	ManagementAPI         bool                         `json:"management_api"`
 }
 
@@ -164,6 +166,7 @@ func configurePlugin(raw []byte) error {
 		}
 	}
 	cfg.BaseURL = strings.TrimRight(firstNonEmpty(cfg.BaseURL, defaultBaseURL), "/")
+	cfg.PublicURL = strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/")
 	activeConfig.Store(cfg)
 	return nil
 }
@@ -184,6 +187,11 @@ func pluginRegistration() registration {
 					Default:     defaultBaseURL,
 					Description: "Abliteration.ai gateway origin. The plugin appends /v1/chat/completions and /v1/models.",
 				},
+				{
+					Name:        "public_url",
+					Type:        pluginapi.ConfigFieldTypeString,
+					Description: "External CLIProxyAPI origin used for the login page link (auto-detected from X-Forwarded-Host when unset).",
+				},
 			},
 		},
 		Capabilities: registrationCapability{
@@ -193,6 +201,7 @@ func pluginRegistration() registration {
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
 			ExecutorInputFormats:  []string{"openai"},
 			ExecutorOutputFormats: []string{"openai"},
+			ResponseInterceptor:   true,
 			ManagementAPI:         true,
 		},
 	}
@@ -274,6 +283,8 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return handleManagementRegister()
 	case pluginabi.MethodManagementHandle:
 		return handleManagementHandle(request)
+	case pluginabi.MethodResponseInterceptAfter:
+		return handleResponseInterceptAfter(request)
 
 	case pluginabi.MethodModelForAuth:
 		return handleModelForAuth(request)

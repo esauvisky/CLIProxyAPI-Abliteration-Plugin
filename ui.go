@@ -32,11 +32,23 @@ func handleManagementRegister() ([]byte, error) {
 	})
 }
 
+func handleResponseInterceptAfter(raw []byte) ([]byte, error) {
+	var req pluginapi.ResponseInterceptRequest
+	if len(raw) > 0 {
+		if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
+			return nil, errUnmarshal
+		}
+	}
+	observeOriginFromHeaders(req.RequestHeaders)
+	return okEnvelope(pluginapi.ResponseInterceptResponse{})
+}
+
 func handleManagementHandle(raw []byte) ([]byte, error) {
 	var req pluginapi.ManagementRequest
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
 		return nil, errUnmarshal
 	}
+	observeOriginFromHeaders(req.Headers)
 	switch req.Method {
 	case http.MethodGet:
 		return okEnvelope(pluginapi.ManagementResponse{
@@ -113,8 +125,10 @@ const loginPageHTML = `<!doctype html>
 <main>
   <h1>Abliteration.ai API key</h1>
   <p>Paste your API key, then submit. Return to CLIProxyAPI afterwards to finish the login.</p>
-  <label for="mgmtKey">Management key</label>
-  <input type="password" id="mgmtKey" autocomplete="off">
+  <div id="mgmtWrap" style="display:none;">
+    <label for="mgmtKey">Management key</label>
+    <input type="password" id="mgmtKey" autocomplete="off">
+  </div>
   <label for="apiKey">API key</label>
   <input type="password" id="apiKey" autocomplete="off">
   <button id="submit" type="button">Submit</button>
@@ -124,6 +138,54 @@ const loginPageHTML = `<!doctype html>
 const LOGIN_API_URL = '/v0/management/plugins/abliteration/login';
 const statusEl = document.getElementById('status');
 const submitBtn = document.getElementById('submit');
+const mgmtWrap = document.getElementById('mgmtWrap');
+const mgmtInput = document.getElementById('mgmtKey');
+
+function deobfuscateCPASecret(payload) {
+  const prefix = 'enc::v1::';
+  if (!payload || !payload.startsWith(prefix)) return payload;
+  try {
+    const bin = atob(payload.slice(prefix.length));
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    const keyStr = 'cli-proxy-api-webui::secure-storage|' + window.location.host + '|' + navigator.userAgent;
+    const keyBytes = new TextEncoder().encode(keyStr);
+    const out = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i++) out[i] = data[i] ^ keyBytes[i % keyBytes.length];
+    return new TextDecoder().decode(out);
+  } catch (_) {
+    return payload;
+  }
+}
+
+function detectStoredManagementKey() {
+  try {
+    const authRaw = localStorage.getItem('cli-proxy-auth');
+    if (authRaw) {
+      const parsed = JSON.parse(authRaw);
+      const k = parsed && parsed.state && parsed.state.managementKey;
+      if (k && typeof k === 'string' && k.trim()) return k.trim();
+    }
+    const legacy = localStorage.getItem('managementKey');
+    if (legacy) {
+      const dec = deobfuscateCPASecret(legacy);
+      try {
+        const parsed = JSON.parse(dec);
+        if (typeof parsed === 'string' && parsed.trim()) return parsed.trim();
+      } catch (_) {
+        if (typeof dec === 'string' && dec.trim()) return dec.trim();
+      }
+    }
+  } catch (_) {}
+  return '';
+}
+
+const initialKey = detectStoredManagementKey();
+if (initialKey) {
+  mgmtInput.value = initialKey;
+} else {
+  mgmtWrap.style.display = 'block';
+}
 
 function setStatus(text, cls) {
   statusEl.textContent = text;
@@ -132,18 +194,21 @@ function setStatus(text, cls) {
 
 async function submitKey() {
   const state = new URLSearchParams(window.location.search).get('state') || '';
-  const managementKey = document.getElementById('mgmtKey').value.trim();
+  const managementKey = (mgmtInput.value || detectStoredManagementKey()).trim();
   const apiKey = document.getElementById('apiKey').value.trim();
   submitBtn.disabled = true;
   setStatus('Submitting...');
   try {
     const resp = await fetch(LOGIN_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + managementKey },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + managementKey, 'X-Management-Key': managementKey },
       body: JSON.stringify({ state: state, api_key: apiKey }),
       cache: 'no-store',
     });
     const text = await resp.text();
+    if (resp.status === 401 || resp.status === 403) {
+      mgmtWrap.style.display = 'block';
+    }
     if (!resp.ok) {
       setStatus('HTTP ' + resp.status + ': ' + text, 'error');
       return;
